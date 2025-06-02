@@ -22,11 +22,11 @@ def analyze_stock(ticker):
         if data.empty:
             return None
 
-        # אם יש MultiIndex, משטחים
+        # שטוח אם MultiIndex
         if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.map('_'.join).str.strip('_')
+            data.columns = ['_'.join(col).strip('_') for col in data.columns.values]
 
-        # ניסיון לשלוף את העמודה המתאימה למחיר סגירה
+        # זיהוי עמודת סגירה
         close_col = f'Close_{ticker}'
         if close_col in data.columns:
             data['Close'] = data[close_col]
@@ -35,7 +35,7 @@ def analyze_stock(ticker):
         else:
             return None
 
-        # חישוב ממוצעים נעים
+        # חישוב ממוצעים
         data['MA50'] = data['Close'].rolling(50, min_periods=1).mean()
         data['MA200'] = data['Close'].rolling(200, min_periods=1).mean()
 
@@ -58,18 +58,21 @@ if selected_ticker:
         st.warning("לא נמצאו נתונים עבור מניה זו.")
         st.stop()
 
+    # בדיקה לעמודות דרושות
     required_cols = ['Close', 'MA50', 'MA200']
-    missing_cols = [col for col in required_cols if col not in data.columns]
-
-    if missing_cols:
-        st.error(f"חסרות עמודות: {', '.join(missing_cols)}")
+    if not all(col in data.columns for col in required_cols):
+        st.error("חסרות עמודות בנתונים. ייתכן שהמבנה השתנה או שהמנייה לא זמינה.")
         st.write("עמודות זמינות:", data.columns.tolist())
         st.stop()
 
-    # הצגת גרף
-    st.line_chart(data[required_cols])
+    # גרף
+    try:
+        st.line_chart(data[required_cols])
+    except Exception as e:
+        st.error(f"שגיאה בהצגת הגרף: {e}")
+        st.stop()
 
-    # המלצה על בסיס MA50
+    # המלצה
     current_price = data['Close'].iloc[-1]
     ma50 = data['MA50'].iloc[-1]
 
@@ -80,6 +83,6 @@ if selected_ticker:
     else:
         st.error("המלצה: מכירה (מחיר מתחת לממוצע 50 יום)")
 
-    # טבלת נתונים אחרונים
+    # טבלה
     st.write("נתונים אחרונים:")
     st.dataframe(data.tail(10))

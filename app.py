@@ -6,22 +6,31 @@ st.set_page_config(page_title="המלצות מניות", layout="wide")
 
 @st.cache_data
 def load_sp500_tickers():
-    # טען את הטיקרים מוויקיפדיה
-    url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-    tables = pd.read_html(url)
-    df = tables[0]
-    tickers = df['Symbol'].tolist()
-    # החלף נקודות במקף (כמו ש-yfinance דורש)
-    tickers = [t.replace('.', '-') for t in tickers]
-    return tickers
+    url = "https://raw.githubusercontent.com/josericodata/SP500Forecaster/main/assets/data/sp500_tickers.csv"
+    df = pd.read_csv(url)
+    if 'Symbol' in df.columns:
+        return df['Symbol'].dropna().tolist()
+    elif 'Ticker' in df.columns:
+        return df['Ticker'].dropna().tolist()
+    else:
+        st.error("קובץ המניות לא מכיל עמודת Symbol או Ticker")
+        return []
 
 def analyze_stock(ticker):
     try:
         data = yf.download(ticker, period="1y")
         if data.empty:
             return None
-        data['MA50'] = data['Close'].rolling(50, min_periods=1).mean()
-        data['MA200'] = data['Close'].rolling(200, min_periods=1).mean()
+        # אם יש MultiIndex, משטחים
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.map('_'.join).str.strip('_')
+        # שמות עמודות לפי הטיקר
+        close_col = f'Close_{ticker}'
+        if close_col not in data.columns:
+            return None
+        data['MA50'] = data[close_col].rolling(50, min_periods=1).mean()
+        data['MA200'] = data[close_col].rolling(200, min_periods=1).mean()
+        data['Close'] = data[close_col]  # לשימוש בהמשך
         return data
     except Exception as e:
         st.error(f"שגיאה בטעינת נתונים עבור {ticker}: {e}")

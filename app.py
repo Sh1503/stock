@@ -18,19 +18,27 @@ def load_sp500_tickers():
 
 def analyze_stock(ticker):
     try:
-        data = yf.download(ticker, period="1y")
+        data = yf.download(ticker, period="1y", group_by='ticker')
         if data.empty:
             return None
+
         # אם יש MultiIndex, משטחים
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.map('_'.join).str.strip('_')
-        # שמות עמודות לפי הטיקר
+
+        # ניסיון לשלוף את העמודה המתאימה למחיר סגירה
         close_col = f'Close_{ticker}'
-        if close_col not in data.columns:
+        if close_col in data.columns:
+            data['Close'] = data[close_col]
+        elif 'Close' in data.columns:
+            data['Close'] = data['Close']
+        else:
             return None
-        data['MA50'] = data[close_col].rolling(50, min_periods=1).mean()
-        data['MA200'] = data[close_col].rolling(200, min_periods=1).mean()
-        data['Close'] = data[close_col]  # לשימוש בהמשך
+
+        # חישוב ממוצעים נעים
+        data['MA50'] = data['Close'].rolling(50, min_periods=1).mean()
+        data['MA200'] = data['Close'].rolling(200, min_periods=1).mean()
+
         return data
     except Exception as e:
         st.error(f"שגיאה בטעינת נתונים עבור {ticker}: {e}")
@@ -48,21 +56,30 @@ if selected_ticker:
     data = analyze_stock(selected_ticker)
     if data is None:
         st.warning("לא נמצאו נתונים עבור מניה זו.")
+        st.stop()
+
+    required_cols = ['Close', 'MA50', 'MA200']
+    missing_cols = [col for col in required_cols if col not in data.columns]
+
+    if missing_cols:
+        st.error(f"חסרות עמודות: {', '.join(missing_cols)}")
+        st.write("עמודות זמינות:", data.columns.tolist())
+        st.stop()
+
+    # הצגת גרף
+    st.line_chart(data[required_cols])
+
+    # המלצה על בסיס MA50
+    current_price = data['Close'].iloc[-1]
+    ma50 = data['MA50'].iloc[-1]
+
+    if pd.isna(current_price) or pd.isna(ma50):
+        st.warning("לא ניתן לחשב המלצה עקב נתונים חסרים.")
+    elif current_price > ma50:
+        st.success("המלצה: קנייה (מחיר מעל ממוצע 50 יום)")
     else:
-        required_cols = ['Close', 'MA50', 'MA200']
-        missing_cols = [col for col in required_cols if col not in data.columns]
-        if missing_cols:
-            st.error(f"חסרות עמודות: {', '.join(missing_cols)}")
-            st.write("עמודות זמינות:", data.columns.tolist())
-        else:
-            st.line_chart(data[required_cols])
-            current_price = data['Close'].iloc[-1]
-            ma50 = data['MA50'].iloc[-1]
-            if pd.isna(current_price) or pd.isna(ma50):
-                st.warning("לא ניתן לחשב המלצה עקב נתונים חסרים.")
-            elif current_price > ma50:
-                st.success("המלצה: קנייה (מחיר מעל ממוצע 50 יום)")
-            else:
-                st.error("המלצה: מכירה (מחיר מתחת לממוצע 50 יום)")
-            st.write("נתונים אחרונים:")
-            st.dataframe(data.tail(10))
+        st.error("המלצה: מכירה (מחיר מתחת לממוצע 50 יום)")
+
+    # טבלת נתונים אחרונים
+    st.write("נתונים אחרונים:")
+    st.dataframe(data.tail(10))

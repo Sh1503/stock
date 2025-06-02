@@ -18,21 +18,23 @@ def load_sp500_tickers():
 
 def analyze_stock(ticker):
     try:
-        data = yf.download(ticker, period="1y")
+        data = yf.download(ticker, period="1y", group_by='ticker')
         if data.empty:
             return None
 
+        # המרת MultiIndex למבנה רגיל
         if isinstance(data.columns, pd.MultiIndex):
-            data.columns = ['_'.join(col).strip('_') if isinstance(col, tuple) else col for col in data.columns.values]
+            data.columns = ['_'.join([str(c) for c in col]).strip('_') for col in data.columns.values]
 
-        close_col = f'Close_{ticker}'
-        if close_col in data.columns:
-            data['Close'] = data[close_col]
-        elif 'Close' in data.columns:
-            data['Close'] = data['Close']
-        else:
+        # טיפול בשמות עמודות
+        close_candidates = [col for col in data.columns if 'Close' in col]
+        if not close_candidates:
             return None
 
+        close_col = close_candidates[0]  # ניקח את הראשונה (בדר״כ Close או Close_TICKER)
+        data['Close'] = data[close_col]
+
+        # חישוב ממוצעים
         data['MA50'] = data['Close'].rolling(50, min_periods=1).mean()
         data['MA200'] = data['Close'].rolling(200, min_periods=1).mean()
 
@@ -43,8 +45,7 @@ def analyze_stock(ticker):
 
 st.title("מערכת המלצות למניות S&P 500 🇮🇱")
 tickers = load_sp500_tickers()
-if not tickers or len(tickers) == 0:
-    st.warning("לא נטענו מניות מהרשימה.")
+if not tickers:
     st.stop()
 
 selected_ticker = st.selectbox("בחר מנייה:", tickers)
@@ -60,14 +61,11 @@ if selected_ticker:
     missing_cols = [col for col in required_cols if col not in data.columns]
     if missing_cols:
         st.error(f"חסרות עמודות: {', '.join(missing_cols)}")
-        st.write("עמודות זמינות:", data.columns.tolist())
+        st.write("עמודות זמינות:", list(data.columns))
         st.stop()
 
-    try:
-        st.line_chart(data[required_cols])
-    except Exception as e:
-        st.error(f"שגיאה בהצגת גרף: {e}")
-        st.stop()
+    # גרף
+    st.line_chart(data[required_cols])
 
     current_price = data['Close'].iloc[-1]
     ma50 = data['MA50'].iloc[-1]

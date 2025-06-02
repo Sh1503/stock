@@ -18,15 +18,13 @@ def load_sp500_tickers():
 
 def analyze_stock(ticker):
     try:
-        data = yf.download(ticker, period="1y", group_by='ticker')
+        data = yf.download(ticker, period="1y")
         if data.empty:
             return None
 
-        # שטוח אם MultiIndex
         if isinstance(data.columns, pd.MultiIndex):
-            data.columns = ['_'.join(col).strip('_') for col in data.columns.values]
+            data.columns = ['_'.join(col).strip('_') if isinstance(col, tuple) else col for col in data.columns.values]
 
-        # זיהוי עמודת סגירה
         close_col = f'Close_{ticker}'
         if close_col in data.columns:
             data['Close'] = data[close_col]
@@ -35,7 +33,6 @@ def analyze_stock(ticker):
         else:
             return None
 
-        # חישוב ממוצעים
         data['MA50'] = data['Close'].rolling(50, min_periods=1).mean()
         data['MA200'] = data['Close'].rolling(200, min_periods=1).mean()
 
@@ -46,7 +43,8 @@ def analyze_stock(ticker):
 
 st.title("מערכת המלצות למניות S&P 500 🇮🇱")
 tickers = load_sp500_tickers()
-if not tickers:
+if not tickers or len(tickers) == 0:
+    st.warning("לא נטענו מניות מהרשימה.")
     st.stop()
 
 selected_ticker = st.selectbox("בחר מנייה:", tickers)
@@ -58,21 +56,19 @@ if selected_ticker:
         st.warning("לא נמצאו נתונים עבור מניה זו.")
         st.stop()
 
-    # בדיקה לעמודות דרושות
     required_cols = ['Close', 'MA50', 'MA200']
-    if not all(col in data.columns for col in required_cols):
-        st.error("חסרות עמודות בנתונים. ייתכן שהמבנה השתנה או שהמנייה לא זמינה.")
+    missing_cols = [col for col in required_cols if col not in data.columns]
+    if missing_cols:
+        st.error(f"חסרות עמודות: {', '.join(missing_cols)}")
         st.write("עמודות זמינות:", data.columns.tolist())
         st.stop()
 
-    # גרף
     try:
         st.line_chart(data[required_cols])
     except Exception as e:
-        st.error(f"שגיאה בהצגת הגרף: {e}")
+        st.error(f"שגיאה בהצגת גרף: {e}")
         st.stop()
 
-    # המלצה
     current_price = data['Close'].iloc[-1]
     ma50 = data['MA50'].iloc[-1]
 
@@ -83,6 +79,5 @@ if selected_ticker:
     else:
         st.error("המלצה: מכירה (מחיר מתחת לממוצע 50 יום)")
 
-    # טבלה
     st.write("נתונים אחרונים:")
     st.dataframe(data.tail(10))

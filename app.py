@@ -7,7 +7,7 @@ st.set_page_config(page_title="המלצות מניות", layout="wide")
 @st.cache_data
 def load_sp500_tickers():
     url = "https://raw.githubusercontent.com/josericodata/SP500Forecaster/main/assets/data/sp500_tickers.csv"
-    return pd.read_csv(url)['Ticker'].tolist()
+    return pd.read_csv(url)['Symbol'].tolist()
 
 def analyze_stock(ticker):
     data = yf.download(ticker, period="1y")

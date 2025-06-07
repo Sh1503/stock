@@ -1,8 +1,9 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import talib
 
-st.set_page_config(page_title="המלצות מניות", layout="wide")
+st.set_page_config(page_title="מניות בסף פריצה", layout="wide", page_icon="💹")
 
 @st.cache_data
 def load_sp500_tickers():
@@ -13,70 +14,97 @@ def load_sp500_tickers():
 
 def analyze_stock(ticker):
     try:
-        data = yf.download(ticker, period="1y")
-        if data.empty:
+        data = yf.download(ticker, period="6mo", progress=False)
+        if data.empty or len(data) < 50:
             return None
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.map('_'.join)
-        close_col = f'Close_{ticker}' if f'Close_{ticker}' in data.columns else 'Close'
-        if close_col not in data.columns:
-            return None
-        data['MA50'] = data[close_col].rolling(50, min_periods=1).mean()
-        data['MA200'] = data[close_col].rolling(200, min_periods=1).mean()
-        data.rename(columns={close_col: 'Close'}, inplace=True)
-        return data[['Close', 'MA50', 'MA200']]
-    except Exception:
+        
+        # חישוב אינדיקטורים
+        data['MA20'] = data['Close'].rolling(20).mean()
+        data['MA50'] = data['Close'].rolling(50).mean()
+        data['RSI'] = talib.RSI(data['Close'], timeperiod=14)
+        data['OBV'] = talib.OBV(data['Close'], data['Volume'])
+        
+        # זיהוי שיאי 3 חודשים
+        data['3m_high'] = data['High'].rolling(63).max()
+        distance_from_high = (data['3m_high'] - data['Close']) / data['3m_high']
+        
+        # זיהוי תבניות פריצה
+        data['CUP_HANDLE'] = talib.CDLIDENTIFIED3LINES(data['Open'], data['High'], data['Low'], data['Close'])
+        
+        return {
+            'data': data,
+            'distance_from_high': distance_from_high.iloc[-1],
+            'volume_spike': (data['Volume'][-1] > 1.5 * data['Volume'].rolling(20).mean()[-1]),
+            'rsi': data['RSI'].iloc[-1],
+            'obv_trend': (data['OBV'][-5:].pct_change().mean() > 0)
+        }
+    except Exception as e:
+        print(f"Error analyzing {ticker}: {e}")
         return None
 
 @st.cache_data
-def get_top_recommendations(tickers, n=5):
-    results = []
-    for ticker in tickers:
-        data = analyze_stock(ticker)
-        if data is None or data.isnull().values.any():
+def get_breakout_candidates(_tickers, max_stocks=100):
+    candidates = []
+    for ticker in _tickers[:max_stocks]:  # מגביל לסריקה חלקית לשיפור ביצועים
+        analysis = analyze_stock(ticker)
+        if not analysis:
             continue
-        current = data['Close'].iloc[-1]
-        ma50 = data['MA50'].iloc[-1]
-        ma200 = data['MA200'].iloc[-1]
-        # קריטריונים פשוטים: מחיר מעל MA50 ו-MA200
-        if current > ma50 and current > ma200:
-            score = (current - ma50) + (current - ma200)
-            results.append({'Ticker': ticker, 'Price': current, 'MA50': ma50, 'MA200': ma200, 'Score': score})
-        if len(results) >= 20:  # מגביל את כמות המניות לבדיקה (לשיפור מהירות)
-            break
-    # מיון לפי ציון
-    df = pd.DataFrame(results)
-    if not df.empty:
-        df = df.sort_values('Score', ascending=False).head(n)
-    return df
+        
+        # קריטריוני PRE-BREAKOUT
+        if (analysis['distance_from_high'] <= 0.02 and 
+            analysis['volume_spike'] and 
+            40 < analysis['rsi'] < 70 and 
+            analysis['obv_trend']):
+            
+            score = (1 - analysis['distance_from_high']) * 100 + analysis['rsi']
+            candidates.append({
+                'Ticker': ticker,
+                'מחיר': analysis['data']['Close'].iloc[-1],
+                'מרחק משיא (%)': round(analysis['distance_from_high']*100,2),
+                'נפח יחסי': round(analysis['data']['Volume'][-1]/analysis['data']['Volume'].rolling(20).mean()[-1],1),
+                'RSI': round(analysis['rsi'],1),
+                'ציון': round(score,1)
+            })
+    
+    return pd.DataFrame(candidates).sort_values('ציון', ascending=False).head(10)
 
-st.title("📈 מערכת המלצות למניות S&P 500")
+# ------ ממשק משתמש ------
+st.title("🚀 סורק מניות PRE-BREAKOUT מבוסס S&P 500")
+with st.expander("📚 הסבר על המאפיינים הנסרקים"):
+    st.markdown("""
+    - **מרחק משיא 3 חודשים**: עד 2% משיא ה-3 חודשים האחרונים
+    - **נפח מסחר**: נפח היום גבוה ב-50% מהממוצע 20 יום
+    - **עוצמה (RSI)**: בין 40-70 (לא יתר-קנייה)
+    - **עוצמת קונים (OBV)**: מגמה עולה ב-5 ימים אחרונים
+    """)
+
+if st.button("🔄 עדכן נתונים"):
+    st.cache_data.clear()
 
 tickers = load_sp500_tickers()
-if not tickers:
-    st.stop()
+breakout_df = get_breakout_candidates(tickers)
 
-# טבלת חמשת המומלצות של היום
-with st.expander("🔥 חמשת המומלצות של היום"):
-    st.info("הטבלה מתעדכנת אוטומטית לפי נתוני יום המסחר האחרון (קריטריון: מחיר מעל MA50 ו-MA200)")
-    top_df = get_top_recommendations(tickers, n=5)
-    if top_df is not None and not top_df.empty:
-        st.table(top_df[['Ticker', 'Price', 'MA50', 'MA200']].set_index('Ticker'))
-    else:
-        st.warning("לא נמצאו מניות מומלצות היום לפי הקריטריונים.")
+if not breakout_df.empty:
+    st.subheader("🔥 TOP 10 מניות בסף פריצה")
+    st.dataframe(
+        breakout_df.set_index('Ticker'),
+        column_config={
+            "מחיר": st.column_config.NumberColumn(format="$%.2f"),
+            "ציון": st.column_config.ProgressColumn(format="%.1f", min_value=0, max_value=150)
+        }
+    )
+    
+    # הצגת גרף לדוגמה למניה המובילה
+    st.subheader(f"ניתוח טכני עבור {breakout_df.iloc[0]['Ticker']}")
+    fig_data = analyze_stock(breakout_df.iloc[0]['Ticker'])['data']
+    st.line_chart(fig_data[['Close','MA20','MA50']])
+else:
+    st.warning("לא נמצאו מניות העומדות בקריטריונים היום")
 
-# המשך האפליקציה הרגילה שלך (בחירת מניה וניתוח)
-selected_ticker = st.selectbox("בחר מנייה:", tickers)
-if selected_ticker:
-    data = analyze_stock(selected_ticker)
-    if data is None:
-        st.warning("⚠️ לא נמצאו נתונים עבור מניה זו")
-    else:
-        st.subheader(f"ניתוח טכני עבור {selected_ticker}")
-        st.line_chart(data)
-        current_price = data['Close'].iloc[-1]
-        ma50 = data['MA50'].iloc[-1]
-        recommendation = "קנייה 🟢" if current_price > ma50 else "מכירה 🔴"
-        st.markdown(f"**המלצה:** {recommendation} (מחיר נוכחי: ${current_price:.2f}, ממוצע 50 יום: ${ma50:.2f})")
-        with st.expander("הצג נתונים היסטוריים"):
-            st.dataframe(data.tail(10))
+# ------ הנחיות הרצה ------
+st.sidebar.markdown("""
+## 📌 הוראות שימוש
+1. הלחיצה על כפתור העדכון תטען נתונים עדכניים
+2. הטבלה ממוינת לפי 'ציון פריצה' משולב
+3. השימוש בנתונים להחלטות השקעה - על אחריות המשתמש בלבד
+""")

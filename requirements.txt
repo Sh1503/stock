@@ -2,5 +2,3 @@ streamlit
 yfinance
 pandas
 lxml
-ta-lib==0.4.28
-ta

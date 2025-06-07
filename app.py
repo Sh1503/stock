@@ -1,8 +1,8 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
-import talib
+from ta.momentum import RSIIndicator
+from ta.volume import OnBalanceVolumeIndicator
 
 st.set_page_config(page_title="מערכת ניתוח מניות", layout="wide", page_icon="💹")
 
@@ -20,11 +20,14 @@ def analyze_stock(ticker):
         if data.empty or len(data) < 50:
             return None
 
-        # חישוב אינדיקטורים
-        data['MA20'] = talib.SMA(data['Close'], timeperiod=20)
-        data['MA50'] = talib.SMA(data['Close'], timeperiod=50)
-        data['RSI'] = talib.RSI(data['Close'], timeperiod=14)
-        data['OBV'] = talib.OBV(data['Close'], data['Volume'])
+        # חישוב ממוצעים נעים
+        data['MA20'] = data['Close'].rolling(20).mean()
+        data['MA50'] = data['Close'].rolling(50).mean()
+        # חישוב RSI
+        data['RSI'] = RSIIndicator(data['Close'], window=14).rsi()
+        # חישוב OBV
+        data['OBV'] = OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
+        # שיא 3 חודשים
         data['3m_high'] = data['High'].rolling(63).max()
         distance_from_high = (data['3m_high'] - data['Close']) / data['3m_high']
         volume_spike = data['Volume'].iloc[-1] > 1.5 * data['Volume'].rolling(20).mean().iloc[-1]
@@ -69,11 +72,9 @@ def get_breakout_candidates(_tickers, max_stocks=100):
 # ------ ממשק משתמש ------
 st.title("📈 מערכת ניתוח מניות S&P 500")
 
-# עדכון נתונים
 if st.button("🔄 עדכן כל הנתונים"):
     st.cache_data.clear()
 
-# טעינת טיקרים
 tickers = load_sp500_tickers()
 
 # ------ חלק 1: סורק אוטומטי ------
@@ -146,5 +147,5 @@ st.sidebar.markdown("""
 """)
 
 # ------ הרצה ------
-# לשמור כ-app.py ולהריץ עם:
+# שמור את הקוד כ-app.py והריץ עם:
 # streamlit run app.py
